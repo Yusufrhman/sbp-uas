@@ -1,9 +1,9 @@
 // src/utils/forwardChaining.ts
 
-// Ambang untuk memperluas jalur pekerjaan
+// Ambang memicu pendalaman course untuk suatu job saat CF sementara melewati batas
 export const EXPAND_GATE = 0.3; // jika CF sementara >= 0.30, gali matkul pendukung
 
-// Skala jawaban CF user
+// Pemetaan skala Likert (string) -> nilai CF [0..1]
 export const SCALE_TO_CF: Record<string, number> = {
   "1": 0.0,
   "2": 0.25,
@@ -13,6 +13,7 @@ export const SCALE_TO_CF: Record<string, number> = {
 };
 
 // --- Jobs dan rules ---
+// Setiap job punya daftar course beserta bobot (keyakinan pakar) kontribusinya
 export const JOB_RULES: Record<string, Record<string, number>> = {
   "Software Engineer": {
     "Software Development": 0.9,
@@ -82,19 +83,22 @@ export const JOB_RULES: Record<string, Record<string, number>> = {
   },
 };
 
+// Jejak kontribusi course pada suatu job
 export type CourseContribution = {
   course: string;
-  cfUser: number;
-  evidence: number;
+  cfUser: number; // nilai preferensi user untuk course [0..1]
+  evidence: number; // cfUser * cfExpert
 };
 
+// Hasil perankingan job
 export type JobResult = {
   job: string;
-  cf: number;
-  contributions: CourseContribution[];
+  cf: number; // CF akhir untuk job
+  contributions: CourseContribution[]; // top kontribusi course
 };
 
 // --- Fungsi CF ---
+// Kombinasi evidence positif: cf_new_total = cf_old + cf_new * (1 - cf_old)
 export function cfCombinePos(cfOld: number, cfNew: number): number {
   if (cfOld <= 0) {
     return cfNew;
@@ -102,6 +106,7 @@ export function cfCombinePos(cfOld: number, cfNew: number): number {
   return cfOld + cfNew * (1 - cfOld);
 }
 
+// Forward chaining: hitung CF tiap job berdasarkan preferensi user
 export function forwardChain(userPrefs: Record<string, number>): {
   cfJobs: Record<string, number>;
   traces: Record<string, CourseContribution[]>;
@@ -110,26 +115,26 @@ export function forwardChain(userPrefs: Record<string, number>): {
   const traces: Record<string, CourseContribution[]> = {};
 
   for (const [job, mapping] of Object.entries(JOB_RULES)) {
-    let cfJob = 0.0;
+    let cfJob = 0.0; // akumulator CF untuk job ini
     const contribs: CourseContribution[] = [];
 
     for (const [course, cfExpert] of Object.entries(mapping)) {
-      const cfUser = userPrefs[course] || 0.0;
+      const cfUser = userPrefs[course] || 0.0; // 0 jika user belum menilai course
       if (cfUser > 0) {
-        const evidence = cfUser * cfExpert;
-        cfJob = cfCombinePos(cfJob, evidence);
+        const evidence = cfUser * cfExpert; // evidence dari course untuk job
+        cfJob = cfCombinePos(cfJob, evidence); // gabungkan secara incremental
         contribs.push({
           course,
           cfUser,
-          evidence: Math.round(evidence * 10000) / 10000,
+          evidence: Math.round(evidence * 10000) / 10000, // simpan jejak (dibulatkan 4 desimal)
         });
       }
     }
 
     if (contribs.length > 0) {
-      contribs.sort((a, b) => b.evidence - a.evidence);
-      cfJobs[job] = Math.round(cfJob * 10000) / 10000;
-      traces[job] = contribs;
+      contribs.sort((a, b) => b.evidence - a.evidence); // urutkan kontribusi terbesar dulu
+      cfJobs[job] = Math.round(cfJob * 10000) / 10000; // CF akhir untuk job (4 desimal)
+      traces[job] = contribs; // simpan jejak kontribusi
     }
   }
 
@@ -137,6 +142,7 @@ export function forwardChain(userPrefs: Record<string, number>): {
 }
 
 // --- Adaptive Interview ---
+// Hitung bobot agregat tiap course (penjumlahan bobot di semua job)
 export function courseWeight(): Record<string, number> {
   const w: Record<string, number> = {};
   for (const mapping of Object.values(JOB_RULES)) {
@@ -147,28 +153,30 @@ export function courseWeight(): Record<string, number> {
   return w;
 }
 
+// Ambil daftar course seed (topK) berdasarkan bobot agregat
 export function buildSeedCourses(topK = 8): string[] {
   const w = courseWeight();
-  const ranked = Object.entries(w).sort((a, b) => b[1] - a[1]);
+  const ranked = Object.entries(w).sort((a, b) => b[1] - a[1]); // tinggi -> rendah
   return ranked.slice(0, topK).map(([c]) => c);
 }
 
+// Tentukan pertanyaan course berikutnya berdasarkan CF sementara & gate
 export function getNextCourses(
   userPrefs: Record<string, number>,
   asked: Set<string>
 ): string[] {
   const frontier: Array<{ priority: number; course: string }> = [];
 
-  // Seed awal jika belum ada yang ditanya
+  // Jika belum ada yang ditanya, mulai dari seed
   if (asked.size === 0) {
     const seeds = buildSeedCourses();
     return seeds.filter((c) => !asked.has(c));
   }
 
-  // Hitung CF job sementara
+  // Hitung CF job sementara dari preferensi saat ini
   const { cfJobs } = forwardChain(userPrefs);
 
-  // Jika job sudah cukup tinggi, gali matkul pendukung
+  // Jika CF job melewati gate, dorong course pendukung job tsb ke frontier
   for (const [job, cf] of Object.entries(cfJobs)) {
     if (cf >= EXPAND_GATE) {
       for (const [course, cfExp] of Object.entries(JOB_RULES[job])) {
@@ -179,13 +187,14 @@ export function getNextCourses(
     }
   }
 
-  // Sort by priority descending dan ambil unique courses
+  // Urutkan berdasarkan prioritas (bobot pakar), lalu unikkan
   frontier.sort((a, b) => b.priority - a.priority);
   const uniqueCourses = Array.from(new Set(frontier.map((f) => f.course)));
 
-  return uniqueCourses;
+  return uniqueCourses; // bisa kosong jika belum ada job melewati gate
 }
 
+// Urutkan hasil akhir job berdasarkan CF dan ambil top kontribusi untuk display
 export function getRankedResults(
   userPrefs: Record<string, number>
 ): JobResult[] {
@@ -197,7 +206,7 @@ export function getRankedResults(
       cf,
       contributions: traces[job].slice(0, 4), // Top 4 contributions
     }))
-    .sort((a, b) => b.cf - a.cf);
+    .sort((a, b) => b.cf - a.cf); // CF tertinggi di atas
 
   return ranked;
 }
