@@ -1,6 +1,6 @@
 // src/pages/Result.tsx
 import { useLocation, Link } from "react-router-dom";
-import { getRankedResults } from "../lib/forwardChaining";
+import { getRankedResults } from "../../lib/forwardChaining";
 
 export default function ResultScreen() {
   const location = useLocation();

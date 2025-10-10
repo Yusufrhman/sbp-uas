@@ -2,7 +2,7 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import HomeScreen from "./pages/home/HomeScreen";
 import QuestionScreen from "./pages/question/QuestionScreen";
-import ResultScreen from "./pages/ResultScreen";
+import ResultScreen from "./pages/result/ResultScreen";
 
 export default function App() {
   return (
