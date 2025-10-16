@@ -1,0 +1,115 @@
+@startuml cfCombinePos_control_flow
+!theme plain
+title Control Flow Graph: cfCombinePos Function
+
+start
+:Input: cfOld, cfNew;
+
+if (cfOld <= 0?) then (yes)
+  :return cfNew;
+  stop
+else (no)
+  :return cfOld + cfNew * (1 - cfOld);
+  stop
+endif
+
+@enduml
+
+@startuml forwardChain_control_flow
+!theme plain
+title Control Flow Graph: forwardChain Function
+
+start
+:Input: userPrefs;
+:Initialize cfJobs and traces;
+
+:job_iterator = JOB_RULES entries;
+
+while (More jobs?) is (yes)
+  :Get next [job, mapping];
+  :Initialize cfJob = 0.0 and contribs = [];
+  
+  :course_iterator = mapping entries;
+  
+  while (More courses?) is (yes)
+    :Get next [course, cfExpert];
+    :cfUser = userPrefs[course] || 0.0;
+    
+    if (cfUser > 0?) then (yes)
+      :evidence = cfUser * cfExpert;
+      :cfJob = cfCombinePos(cfJob, evidence);
+      :Add contribution to contribs;
+    else (no)
+    endif
+  endwhile (no)
+  
+  if (contribs.length > 0?) then (yes)
+    :Sort contribs by evidence desc;
+    :cfJobs[job] = round(cfJob, 4);
+    :traces[job] = contribs;
+  else (no)
+  endif
+  
+endwhile (no)
+
+:return {cfJobs, traces};
+stop
+
+@enduml
+
+@startuml combined_overview
+!theme plain
+title White-Box Testing Overview: All Functions
+
+package "cfCombinePos" {
+  rectangle "Path 1: cfOld <= 0" as P1
+  rectangle "return cfNew" as R1
+  rectangle "Path 2: cfOld > 0" as P2  
+  rectangle "return formula" as R2
+  P1 --> R1
+  P2 --> R2
+}
+
+package "forwardChain" {
+  rectangle "Path 1: No contributions" as F1
+  rectangle "Empty results" as FR1
+  rectangle "Path 2: Some contributions" as F2
+  rectangle "Calculated CF values" as FR2
+  rectangle "Path 3: Mixed scenario" as F3
+  rectangle "Partial results" as FR3
+  F1 --> FR1
+  F2 --> FR2
+  F3 --> FR3
+}
+
+note right of cfCombinePos : Simple branching logic\nTwo possible execution paths
+
+note right of forwardChain : Nested loops with conditions\nMultiple decision points
+
+@enduml
+
+@startuml test_coverage_mapping
+!theme plain
+title Test Coverage Mapping
+
+package "cfCombinePos Tests" as CFTests {
+  rectangle "TC-CF-001: cfOld = 0" as TC1
+  rectangle "TC-CF-002: cfOld < 0" as TC2
+  rectangle "TC-CF-003: Both positive" as TC3
+  rectangle "TC-CF-004: Boundary values" as TC4
+  rectangle "TC-CF-005: Maximum values" as TC5
+}
+
+package "forwardChain Tests" as FCTests {
+  rectangle "TC-FC-001: Empty preferences" as TF1
+  rectangle "TC-FC-002: Single course" as TF2
+  rectangle "TC-FC-003: Multiple courses" as TF3
+  rectangle "TC-FC-004: Zero preferences" as TF4
+  rectangle "TC-FC-005: Mixed preferences" as TF5
+}
+
+note right of CFTests : Path 1: TC-CF-001, TC-CF-002\nPath 2: TC-CF-003, TC-CF-004, TC-CF-005
+
+note right of FCTests : Path 1: TC-FC-001, TC-FC-004\nPath 2: TC-FC-002, TC-FC-003\nPath 3: TC-FC-005
+
+@enduml
