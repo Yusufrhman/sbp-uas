@@ -1,71 +1,44 @@
 // src/pages/Question.tsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { buildSeedCourses, getNextCourses, SCALE_TO_CF } from "../../lib/forwardChaining";
-
+import { getAllCourses, SCALE_TO_CF } from "../../lib/forwardChaining";
 
 export default function QuestionScreen() {
   const navigate = useNavigate();
 
-  const [currentCourse, setCurrentCourse] = useState<string>("");
+  const [courses, setCourses] = useState<string[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [value, setValue] = useState<number | null>(null);
   const [userPrefs, setUserPrefs] = useState<Record<string, number>>({});
-  const [asked, setAsked] = useState<Set<string>>(new Set());
-  const [courseQueue, setCourseQueue] = useState<string[]>([]);
-  const [questionNumber, setQuestionNumber] = useState(1);
 
-  // Initialize dengan seed courses
+  // Load all ordered courses on mount
   useEffect(() => {
-    const seeds = buildSeedCourses();
-    setCourseQueue(seeds);
-    setCurrentCourse(seeds[0] || "");
+    const allCourses = getAllCourses();
+    setCourses(allCourses);
   }, []);
 
   const handleNext = () => {
     if (value === null) return;
 
-    // Simpan jawaban user
+    const currentCourse = courses[currentIndex];
     const cfUser = SCALE_TO_CF[value.toString()];
+
+    // Save user answer
     const newPrefs = { ...userPrefs, [currentCourse]: cfUser };
-    const newAsked = new Set(asked).add(currentCourse);
-
     setUserPrefs(newPrefs);
-    setAsked(newAsked);
+    setValue(null);
 
-    // Get next courses berdasarkan adaptive logic
-    const nextCourses = getNextCourses(newPrefs, newAsked);
-    const remainingQueue = courseQueue.slice(1);
-
-    // Gabungkan sisa queue dengan courses baru
-    const allNextCourses = [...remainingQueue, ...nextCourses].filter(
-      (c) => !newAsked.has(c)
-    );
-
-    // Remove duplicates
-    const uniqueNext = Array.from(new Set(allNextCourses));
-
-    if (uniqueNext.length === 0) {
-      // Selesai, navigasi ke hasil
+    // If this was the last question → go to result
+    if (currentIndex >= courses.length - 1) {
       navigate("/result", { state: { userPrefs: newPrefs } });
       return;
     }
 
-    // Set course berikutnya
-    setCourseQueue(uniqueNext);
-    setCurrentCourse(uniqueNext[0]);
-    setValue(null);
-    setQuestionNumber(questionNumber + 1);
+    // Otherwise move to next question
+    setCurrentIndex((prev) => prev + 1);
   };
 
-  const choices = [
-    { v: 1, label: "Sangat tidak suka" },
-    { v: 2, label: "Tidak suka" },
-    { v: 3, label: "Biasa saja" },
-    { v: 4, label: "Suka" },
-    { v: 5, label: "Sangat suka" },
-  ];
-
-  if (!currentCourse) {
+  if (courses.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -75,9 +48,20 @@ export default function QuestionScreen() {
     );
   }
 
+  const currentCourse = courses[currentIndex];
+  const questionNumber = currentIndex + 1;
+
+  const choices = [
+    { v: 1, label: "Sangat tidak suka" },
+    { v: 2, label: "Tidak suka" },
+    { v: 3, label: "Biasa saja" },
+    { v: 4, label: "Suka" },
+    { v: 5, label: "Sangat suka" },
+  ];
+
   return (
     <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-indigo-50 via-white to-rose-50">
-      {/* soft radial accents (match Home) */}
+      {/* background blur accents */}
       <div className="pointer-events-none absolute inset-0 [mask-image:radial-gradient(60%_60%_at_50%_30%,#000_40%,transparent_100%)]">
         <div className="absolute -top-32 left-1/2 -translate-x-1/2 size-[700px] rounded-full bg-indigo-200/40 blur-3xl" />
         <div className="absolute -bottom-40 right-1/3 size-[600px] rounded-full bg-rose-200/40 blur-3xl" />
@@ -86,19 +70,18 @@ export default function QuestionScreen() {
       <div className="relative mx-auto max-w-4xl p-6 md:p-10">
         <div className="rounded-3xl border border-slate-100/80 bg-white/80 shadow-2xl backdrop-blur-xl overflow-hidden">
           <div className="px-8 py-8 md:px-12 md:py-10">
-            {/* top bar */}
+            {/* header */}
             <div className="flex items-center justify-between gap-4">
               <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold tracking-wide text-slate-600 shadow-sm">
                 <span className="inline-block size-1.5 rounded-full bg-indigo-500" />
                 Kuesioner
               </div>
-
               <div className="text-sm font-medium text-slate-600">
-                Pertanyaan {questionNumber}
+                Pertanyaan {questionNumber} dari {courses.length}
               </div>
             </div>
 
-            {/* title & helper */}
+            {/* question title */}
             <div className="mt-6">
               <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">
                 {currentCourse}
@@ -108,7 +91,6 @@ export default function QuestionScreen() {
               </p>
             </div>
 
-            {/* scale hint */}
             <div className="mt-4 text-sm text-slate-500">
               Skala 1–5 mewakili "sangat tidak suka" hingga "sangat suka".
             </div>
@@ -168,7 +150,7 @@ export default function QuestionScreen() {
                 ].join(" ")}
                 aria-disabled={value === null}
               >
-                Lanjut
+                {currentIndex === courses.length - 1 ? "Selesai" : "Lanjut"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 24 24"
@@ -186,7 +168,6 @@ export default function QuestionScreen() {
             </div>
           </div>
 
-          {/* subtle footer strip (match Home) */}
           <div className="h-2 rounded-b-3xl bg-gradient-to-r from-indigo-500 via-violet-500 to-rose-500" />
         </div>
       </div>

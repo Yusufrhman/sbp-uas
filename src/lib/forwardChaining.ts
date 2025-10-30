@@ -1,8 +1,5 @@
 // src/utils/forwardChaining.ts
 
-// Ambang memicu pendalaman course untuk suatu job saat CF sementara melewati batas
-export const EXPAND_GATE = 0.3; // jika CF sementara >= 0.30, gali matkul pendukung
-
 // Pemetaan skala Likert (string) -> nilai CF [0..1]
 export const SCALE_TO_CF: Record<string, number> = {
   "1": 0.0,
@@ -13,7 +10,6 @@ export const SCALE_TO_CF: Record<string, number> = {
 };
 
 // --- Jobs dan rules ---
-// Setiap job punya daftar course beserta bobot (keyakinan pakar) kontribusinya
 export const JOB_RULES: Record<string, Record<string, number>> = {
   "Software Engineer": {
     "Software Development": 0.9,
@@ -83,30 +79,26 @@ export const JOB_RULES: Record<string, Record<string, number>> = {
   },
 };
 
-// Jejak kontribusi course pada suatu job
+// --- Types ---
 export type CourseContribution = {
   course: string;
-  cfUser: number; // nilai preferensi user untuk course [0..1]
-  evidence: number; // cfUser * cfExpert
+  cfUser: number;
+  evidence: number;
 };
 
-// Hasil perankingan job
 export type JobResult = {
   job: string;
-  cf: number; // CF akhir untuk job
-  contributions: CourseContribution[]; // top kontribusi course
+  cf: number;
+  contributions: CourseContribution[];
 };
 
 // --- Fungsi CF ---
-// Kombinasi evidence positif: cf_new_total = cf_old + cf_new * (1 - cf_old)
 export function cfCombinePos(cfOld: number, cfNew: number): number {
-  if (cfOld <= 0) {
-    return cfNew;
-  }
+  if (cfOld <= 0) return cfNew;
   return cfOld + cfNew * (1 - cfOld);
 }
 
-// Forward chaining: hitung CF tiap job berdasarkan preferensi user
+// --- Forward chaining utama ---
 export function forwardChain(userPrefs: Record<string, number>): {
   cfJobs: Record<string, number>;
   traces: Record<string, CourseContribution[]>;
@@ -115,98 +107,60 @@ export function forwardChain(userPrefs: Record<string, number>): {
   const traces: Record<string, CourseContribution[]> = {};
 
   for (const [job, mapping] of Object.entries(JOB_RULES)) {
-    let cfJob = 0.0; // akumulator CF untuk job ini
+    let cfJob = 0.0;
     const contribs: CourseContribution[] = [];
 
     for (const [course, cfExpert] of Object.entries(mapping)) {
-      const cfUser = userPrefs[course] || 0.0; // 0 jika user belum menilai course
+      const cfUser = userPrefs[course] || 0.0;
       if (cfUser > 0) {
-        const evidence = cfUser * cfExpert; // evidence dari course untuk job
-        cfJob = cfCombinePos(cfJob, evidence); // gabungkan secara incremental
+        const evidence = cfUser * cfExpert;
+        cfJob = cfCombinePos(cfJob, evidence);
         contribs.push({
           course,
           cfUser,
-          evidence: Math.round(evidence * 10000) / 10000, // simpan jejak (dibulatkan 4 desimal)
+          evidence: Math.round(evidence * 10000) / 10000,
         });
       }
     }
 
     if (contribs.length > 0) {
-      contribs.sort((a, b) => b.evidence - a.evidence); // urutkan kontribusi terbesar dulu
-      cfJobs[job] = Math.round(cfJob * 10000) / 10000; // CF akhir untuk job (4 desimal)
-      traces[job] = contribs; // simpan jejak kontribusi
+      contribs.sort((a, b) => b.evidence - a.evidence);
+      cfJobs[job] = Math.round(cfJob * 10000) / 10000;
+      traces[job] = contribs;
     }
   }
 
   return { cfJobs, traces };
 }
 
-// --- Adaptive Interview ---
-// Hitung bobot agregat tiap course (penjumlahan bobot di semua job)
-export function courseWeight(): Record<string, number> {
-  const w: Record<string, number> = {};
-  for (const mapping of Object.values(JOB_RULES)) {
-    for (const [c, cfExp] of Object.entries(mapping)) {
-      w[c] = (w[c] || 0.0) + cfExp;
-    }
-  }
-  return w;
-}
+// --- NEW: Ordered list of all unique courses by job sequence ---
+export function getAllCourses(): string[] {
+  const orderedCourses: string[] = [];
+  const seen = new Set<string>();
 
-// Ambil daftar course seed (topK) berdasarkan bobot agregat
-export function buildSeedCourses(topK = 8): string[] {
-  const w = courseWeight();
-  const ranked = Object.entries(w).sort((a, b) => b[1] - a[1]); // tinggi -> rendah
-  return ranked.slice(0, topK).map(([c]) => c);
-}
-
-// Tentukan pertanyaan course berikutnya berdasarkan CF sementara & gate
-export function getNextCourses(
-  userPrefs: Record<string, number>,
-  asked: Set<string>
-): string[] {
-  const frontier: Array<{ priority: number; course: string }> = [];
-
-  // Jika belum ada yang ditanya, mulai dari seed
-  if (asked.size === 0) {
-    const seeds = buildSeedCourses();
-    return seeds.filter((c) => !asked.has(c));
-  }
-
-  // Hitung CF job sementara dari preferensi saat ini
-  const { cfJobs } = forwardChain(userPrefs);
-
-  // Jika CF job melewati gate, dorong course pendukung job tsb ke frontier
-  for (const [job, cf] of Object.entries(cfJobs)) {
-    if (cf >= EXPAND_GATE) {
-      for (const [course, cfExp] of Object.entries(JOB_RULES[job])) {
-        if (!asked.has(course)) {
-          frontier.push({ priority: cfExp, course });
-        }
+  for (const job of Object.keys(JOB_RULES)) {
+    const mapping = JOB_RULES[job];
+    for (const course of Object.keys(mapping)) {
+      if (!seen.has(course)) {
+        orderedCourses.push(course);
+        seen.add(course);
       }
     }
   }
 
-  // Urutkan berdasarkan prioritas (bobot pakar), lalu unikkan
-  frontier.sort((a, b) => b.priority - a.priority);
-  const uniqueCourses = Array.from(new Set(frontier.map((f) => f.course)));
-
-  return uniqueCourses; // bisa kosong jika belum ada job melewati gate
+  return orderedCourses;
 }
 
-// Urutkan hasil akhir job berdasarkan CF dan ambil top kontribusi untuk display
+// --- Hasil akhir ranking ---
 export function getRankedResults(
   userPrefs: Record<string, number>
 ): JobResult[] {
   const { cfJobs, traces } = forwardChain(userPrefs);
-
-  const ranked = Object.entries(cfJobs)
+  return Object.entries(cfJobs)
     .map(([job, cf]) => ({
       job,
       cf,
-      contributions: traces[job].slice(0, 4), // Top 4 contributions
+      contributions: traces[job].slice(0, 4),
     }))
-    .sort((a, b) => b.cf - a.cf); // CF tertinggi di atas
-
-  return ranked;
+    .sort((a, b) => b.cf - a.cf);
 }
